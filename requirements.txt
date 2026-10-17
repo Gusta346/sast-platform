@@ -13,3 +13,6 @@ pytest
 pytest-cov
 httpx
 Flask
+python-multipart
+
+python-multipart>=0.0.9

@@ -8,6 +8,7 @@ services:
       - ./services:/app/services
       - ./samples:/app/samples
       - ./tests:/app/tests
+      - scan_data:/app/data
     environment:
       PYTHONPATH: /app
       CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/0}
@@ -39,6 +40,7 @@ services:
       - ./services:/app/services
       - ./samples:/app/samples
       - ./tests:/app/tests
+      - scan_data:/app/data
     environment:
       PYTHONPATH: /app
       CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/0}
@@ -117,3 +119,4 @@ volumes:
   ollama_data:
   postgres_data:
   redis_data:
+  scan_data:

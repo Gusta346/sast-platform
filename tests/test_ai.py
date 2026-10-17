@@ -30,6 +30,7 @@ def test_ollama_success(monkeypatch) -> None:
         "falso_positivo": False,
         "justificativa": "Entrada externa alcança a consulta.",
         "codigo_corrigido": "connection.execute(query, params)",
+        "ia_origem": "llm",
     }
 
     class Response:
@@ -72,6 +73,7 @@ def test_invalid_json_retries_then_uses_fallback(monkeypatch) -> None:
     assert len(calls) == 2
     assert result["severidade"] == "HIGH"
     assert result["falso_positivo"] is False
+    assert result["ia_origem"] == "fallback"
     assert result["codigo_corrigido"] == "Use consultas parametrizadas e nunca concatene dados externos na instrução SQL."
 
 
@@ -87,3 +89,4 @@ def test_ollama_unavailable_uses_fallback(monkeypatch) -> None:
 
     assert result["severidade"] == "HIGH"
     assert result["falso_positivo"] is False
+    assert result["ia_origem"] == "fallback"

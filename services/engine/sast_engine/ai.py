@@ -126,6 +126,7 @@ def _validate_result(raw: str) -> dict[str, Any] | None:
         "falso_positivo": false_positive,
         "justificativa": justification,
         "codigo_corrigido": fixed_code,
+        "ia_origem": "llm",
     }
 
 
@@ -138,6 +139,7 @@ def _fallback(finding: Finding) -> dict[str, Any]:
             finding.rule_id,
             finding.remediacao or "Revise a entrada e aplique validação e sanitização adequadas.",
         ),
+        "ia_origem": "fallback",
     }
 
 

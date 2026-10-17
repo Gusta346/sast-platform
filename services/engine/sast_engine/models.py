@@ -30,3 +30,4 @@ class Finding:
     descricao: str
     remediacao: str
     ferramentas: tuple[str, ...] = field(default_factory=lambda: ("ast",))
+    ia_origem: str = "fallback"

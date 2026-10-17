@@ -1,0 +1,15 @@
+fastapi
+uvicorn
+sqlalchemy
+psycopg2-binary
+celery
+redis
+tree-sitter
+tree-sitter-python
+bandit
+semgrep
+requests
+pytest
+pytest-cov
+httpx
+Flask

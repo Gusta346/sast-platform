@@ -11,6 +11,7 @@ SAMPLE_DIR = Path(__file__).parents[1] / "samples" / "vulnerable_app"
 def test_vulnerable_sample_has_all_expected_findings() -> None:
     """A amostra deve conter as oito ocorrências vulneráveis esperadas."""
     findings = scan_directory(SAMPLE_DIR, include_external=False)
+    findings = [finding for finding in findings if not finding.rule_id.startswith("TAINT-")]
     app_findings = [finding for finding in findings if finding.arquivo.endswith("app.py")]
 
     assert len(app_findings) == 8

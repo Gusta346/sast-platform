@@ -12,6 +12,7 @@ from collections.abc import Callable, Iterable
 from .models import Finding, Severity
 from .parser import parse_source
 from .rules import ALL_RULES
+from .taint import analyze_taint
 
 logger = logging.getLogger(__name__)
 
@@ -40,11 +41,13 @@ class Scanner:
         source = file_path.read_text(encoding="utf-8")
         parsed = parse_source(source)
         filename = str(file_path.relative_to(root)) if root else str(file_path)
-        return [
+        findings = [
             finding
             for rule in self.rules
             for finding in rule.check(parsed.ast_tree, filename, source)
         ]
+        findings.extend(analyze_taint(source, filename))
+        return findings
 
     def _run_bandit(self, directory: Path) -> list[Finding]:
         if shutil.which("bandit") is None:
@@ -159,6 +162,6 @@ def _cwe_value(value: object) -> str:
 def _deduplicate(findings: Iterable[Finding]) -> list[Finding]:
     unique: dict[tuple[str, int, str], Finding] = {}
     for finding in findings:
-        key = (finding.arquivo, finding.linha, finding.cwe)
+        key = (finding.arquivo, finding.linha, finding.cwe, finding.rule_id)
         unique.setdefault(key, finding)
     return list(unique.values())

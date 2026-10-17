@@ -181,6 +181,7 @@ class TaintAnalyzer:
                 owasp="A03:2021 - Injection" if sink in {"sql", "command", "code"} else "",
                 descricao=f"Fluxo tainted detectado: source linha {source_line} -> sink linha {sink_line}.",
                 remediacao="Valide e sanitize a entrada antes de utilizá-la no sink.",
+                ferramentas=("taint",),
             )
         )
 

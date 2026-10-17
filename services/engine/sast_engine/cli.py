@@ -63,12 +63,24 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2
 
     directory = args.directory.resolve()
-    python_files = sorted(directory.rglob("*.py")) if directory.is_dir() else []
+    ignore_patterns = _load_ignore_patterns(directory)
+    python_files = (
+        [
+            path
+            for path in sorted(directory.rglob("*.py"))
+            if not any(
+                _matches_ignore(str(path.relative_to(directory)), pattern)
+                for pattern in ignore_patterns
+            )
+        ]
+        if directory.is_dir()
+        else []
+    )
     if not directory.exists() or not directory.is_dir() or not python_files:
         print(f"Caminho não encontrado: {args.directory}", file=sys.stderr)
         return 2
 
-    findings = _filter_ignored(scan_directory(directory), directory)
+    findings = scan_directory(directory, ignore_patterns=ignore_patterns)
     if "json" in formats:
         _write_json(args.output.with_suffix(".json"), findings)
     if "sarif" in formats:
@@ -84,15 +96,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     return 1 if failed else 0
 
 
-def _filter_ignored(findings: list[Finding], directory: Path) -> list[Finding]:
-    patterns = _read_ignore_file(directory / ".sast-ignore")
-    if not patterns:
-        return findings
-    return [
-        finding
-        for finding in findings
-        if not any(_matches_ignore(finding.arquivo, pattern) for pattern in patterns)
-    ]
+def _load_ignore_patterns(directory: Path) -> list[str]:
+    """Carrega o ignore do diretório analisado ou da raiz atual."""
+    local = directory / ".sast-ignore"
+    if local.is_file():
+        return _read_ignore_file(local)
+    return _read_ignore_file(Path.cwd() / ".sast-ignore")
 
 
 def _read_ignore_file(path: Path) -> list[str]:
@@ -153,6 +162,7 @@ def _write_sarif(path: Path, findings: list[Finding]) -> None:
                 "cwe": finding.cwe,
                 "owasp": finding.owasp,
                 "remediacao": finding.remediacao,
+                "ferramentas": list(finding.ferramentas),
             },
         }
         results.append(result)

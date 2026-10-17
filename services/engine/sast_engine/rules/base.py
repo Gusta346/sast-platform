@@ -39,6 +39,7 @@ class BaseRule(ABC):
             owasp=self.owasp,
             descricao=description,
             remediacao=remediation,
+            ferramentas=("ast",),
         )
 
     @abstractmethod

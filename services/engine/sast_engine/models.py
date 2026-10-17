@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 
 
@@ -29,3 +29,4 @@ class Finding:
     owasp: str
     descricao: str
     remediacao: str
+    ferramentas: tuple[str, ...] = field(default_factory=lambda: ("ast",))

@@ -11,3 +11,7 @@ node_modules/
 
 relatorio*.json
 relatorio*.sarif
+
+relatorio*.json
+relatorio*.sarif
+services/relatorio*

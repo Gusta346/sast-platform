@@ -6,7 +6,7 @@ import os
 import re
 from collections.abc import Generator
 
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import DDL, create_engine, inspect, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -76,8 +76,7 @@ def migrate_schema() -> None:
                 quoted_table = preparer.quote(table)
                 quoted_column = preparer.quote(column)
                 connection.execute(
-                    # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text -- DDL com identificadores constantes validados por allowlist; não há entrada do usuário
-                    text(
+                    DDL(
                         f"ALTER TABLE {quoted_table} ADD COLUMN "
                         f"{quoted_column} {column_type}"
                     )

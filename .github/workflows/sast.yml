@@ -1,0 +1,99 @@
+name: SAST Security Gate
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+  security-events: write
+  pull-requests: write
+
+jobs:
+  test:
+    name: Testes
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Instalar dependências
+        run: python -m pip install -r requirements.txt
+      - name: Executar pytest com cobertura
+        run: python -m pytest --cov=services --cov-report=term-missing --cov-report=xml
+
+  sast:
+    name: Security Gate
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Instalar dependências
+        run: python -m pip install -r requirements.txt
+      - name: Executar SAST
+        id: scan
+        continue-on-error: true
+        env:
+          PYTHONPATH: /app
+        run: |
+          export PYTHONPATH="$GITHUB_WORKSPACE:/app"
+          python -m services.engine.sast_engine.cli scan . --fail-on HIGH --format json,sarif --output sast-report
+      - name: Publicar relatório
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sast-report
+          path: |
+            sast-report.json
+            sast-report.sarif
+      - name: Enviar SARIF ao Code Scanning
+        if: always() && hashFiles('sast-report.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: sast-report.sarif
+      - name: Comentar resumo no Pull Request
+        if: always() && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const report = JSON.parse(fs.readFileSync('sast-report.json', 'utf8'));
+            const counts = report.reduce((acc, finding) => {
+              acc[finding.severidade] = (acc[finding.severidade] || 0) + 1;
+              return acc;
+            }, {});
+            const summary = Object.entries(counts)
+              .map(([severity, count]) => `${severity}: ${count}`)
+              .join(', ') || 'nenhum finding';
+            const body = `### SAST Security Gate\n\nFindings: **${report.length}** (${summary}).\n\nRelatórios completos disponíveis no artifact \`sast-report\`.`;
+            const { owner, repo } = context.repo;
+            const issue = context.issue.number;
+            const comments = await github.rest.issues.listComments({ owner, repo, issue_number: issue });
+            const previous = comments.data.find(comment =>
+              comment.user.type === 'Bot' && comment.body.includes('### SAST Security Gate')
+            );
+            if (previous) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: previous.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number: issue, body });
+            }
+      - name: Aplicar resultado do Security Gate
+        if: steps.scan.outcome == 'failure'
+        run: exit 1
+
+  docker:
+    name: Validação Docker
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Construir imagens
+        run: docker compose build

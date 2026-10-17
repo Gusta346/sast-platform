@@ -4,7 +4,12 @@ services:
       context: .
       dockerfile: Dockerfile
     command: uvicorn services.api.main:app --host 0.0.0.0 --port 8000
+    volumes:
+      - ./services:/app/services
+      - ./samples:/app/samples
+      - ./tests:/app/tests
     environment:
+      PYTHONPATH: /app
       CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/0}
       CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/1}
       DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-sast_user}:${POSTGRES_PASSWORD:-change-me-local-only}@postgres:5432/${POSTGRES_DB:-sast}
@@ -30,7 +35,12 @@ services:
       context: .
       dockerfile: Dockerfile
     command: celery -A services.worker.celery_app.celery_app worker --loglevel=info
+    volumes:
+      - ./services:/app/services
+      - ./samples:/app/samples
+      - ./tests:/app/tests
     environment:
+      PYTHONPATH: /app
       CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/0}
       CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/1}
       DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-sast_user}:${POSTGRES_PASSWORD:-change-me-local-only}@postgres:5432/${POSTGRES_DB:-sast}

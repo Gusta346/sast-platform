@@ -11,5 +11,6 @@ RUN pip install --upgrade pip && pip install -r requirements.txt
 
 COPY services ./services
 COPY samples ./samples
+COPY tests ./tests
 
 EXPOSE 8000

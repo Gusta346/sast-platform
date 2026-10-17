@@ -1,0 +1,4 @@
+# Amostras e testes podem conter padrões vulneráveis intencionais.
+samples/
+tests/
+.venv/

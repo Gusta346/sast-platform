@@ -11,6 +11,7 @@ import requests
 from .models import Finding, Severity
 
 _DEFAULT_TIMEOUT = 30.0
+_DEFAULT_MODEL = "llama3"
 _MAX_ATTEMPTS = 2
 _REMEDIATIONS = {
     "hardcoded_secret": "Remova o segredo do código e leia-o de uma variável de ambiente ou gerenciador de segredos.",
@@ -31,11 +32,16 @@ _REMEDIATIONS = {
 def classify_and_remediate(
     finding: Finding,
     code_context: str,
+    *,
+    use_llm: bool = True,
 ) -> dict[str, Any]:
     """Classifica e sugere correção para um finding usando Ollama ou fallback."""
+    if not use_llm:
+        return _fallback(finding)
+
     prompt = _build_prompt(finding, code_context)
     endpoint = f"{os.getenv('OLLAMA_URL', 'http://localhost:11434').rstrip('/')}/api/generate"
-    model = os.getenv("OLLAMA_MODEL", "llama3")
+    model = os.getenv("OLLAMA_MODEL") or _DEFAULT_MODEL
     timeout = _timeout_from_environment()
 
     for attempt in range(_MAX_ATTEMPTS):
@@ -143,8 +149,14 @@ def _fallback(finding: Finding) -> dict[str, Any]:
     }
 
 
+def fallback_result(finding: Finding) -> dict[str, Any]:
+    """Retorna a remediação determinística sem consultar o Ollama."""
+    return _fallback(finding)
+
+
 def _timeout_from_environment() -> float:
     try:
-        return float(os.getenv("OLLAMA_TIMEOUT", str(_DEFAULT_TIMEOUT)))
+        timeout = float(os.getenv("OLLAMA_TIMEOUT", str(_DEFAULT_TIMEOUT)))
+        return timeout if timeout > 0 else _DEFAULT_TIMEOUT
     except ValueError:
         return _DEFAULT_TIMEOUT

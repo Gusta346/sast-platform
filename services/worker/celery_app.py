@@ -3,6 +3,7 @@
 import os
 
 from celery import Celery
+from celery.signals import worker_ready
 
 celery_app = Celery(
     "sast_worker",
@@ -15,6 +16,14 @@ celery_app.conf.update(
 )
 
 celery_app.autodiscover_tasks(["services.worker"])
+
+
+@worker_ready.connect
+def migrate_worker_schema(**kwargs) -> None:
+    """Garante o schema atualizado quando o worker inicia."""
+    from services.api.database import create_tables
+
+    create_tables()
 
 
 @celery_app.task

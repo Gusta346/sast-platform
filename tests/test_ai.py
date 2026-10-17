@@ -55,6 +55,72 @@ def test_ollama_success(monkeypatch) -> None:
     assert "a = 1" in calls[0][1]["json"]["prompt"]
 
 
+def test_ollama_model_and_timeout_are_configurable(monkeypatch) -> None:
+    """Modelo e timeout devem respeitar as variáveis de ambiente."""
+    monkeypatch.setenv("OLLAMA_MODEL", "modelo-de-teste")
+    monkeypatch.setenv("OLLAMA_TIMEOUT", "7.5")
+
+    class Response:
+        def raise_for_status(self) -> None:
+            pass
+
+        def json(self) -> dict[str, str]:
+            return {
+                "response": json.dumps(
+                    {
+                        "severidade": "HIGH",
+                        "falso_positivo": False,
+                        "justificativa": "justificativa",
+                        "codigo_corrigido": "correcao",
+                    }
+                )
+            }
+
+    calls = []
+    monkeypatch.setattr(
+        requests,
+        "post",
+        lambda *args, **kwargs: calls.append((args, kwargs)) or Response(),
+    )
+
+    classify_and_remediate(_finding(), "connection.execute(query)")
+
+    assert calls[0][1]["json"]["model"] == "modelo-de-teste"
+    assert calls[0][1]["timeout"] == 7.5
+
+
+def test_invalid_ollama_timeout_uses_default(monkeypatch) -> None:
+    """Timeout inválido não deve criar uma requisição sem limite válido."""
+    monkeypatch.setenv("OLLAMA_TIMEOUT", "0")
+
+    class Response:
+        def raise_for_status(self) -> None:
+            pass
+
+        def json(self) -> dict[str, str]:
+            return {
+                "response": json.dumps(
+                    {
+                        "severidade": "HIGH",
+                        "falso_positivo": False,
+                        "justificativa": "justificativa",
+                        "codigo_corrigido": "correcao",
+                    }
+                )
+            }
+
+    calls = []
+    monkeypatch.setattr(
+        requests,
+        "post",
+        lambda *args, **kwargs: calls.append((args, kwargs)) or Response(),
+    )
+
+    classify_and_remediate(_finding(), "connection.execute(query)")
+
+    assert calls[0][1]["timeout"] == 30.0
+
+
 def test_invalid_json_retries_then_uses_fallback(monkeypatch) -> None:
     """JSON inválido deve gerar uma nova tentativa e depois fallback."""
 
@@ -90,3 +156,17 @@ def test_ollama_unavailable_uses_fallback(monkeypatch) -> None:
     assert result["severidade"] == "HIGH"
     assert result["falso_positivo"] is False
     assert result["ia_origem"] == "fallback"
+
+
+def test_fallback_can_be_forced_without_calling_ollama(monkeypatch) -> None:
+    """Findings fora do gate de IA devem usar fallback sem requisição HTTP."""
+    monkeypatch.setattr(
+        requests,
+        "post",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("não deveria chamar Ollama")),
+    )
+
+    result = classify_and_remediate(_finding(), "connection.execute(query)", use_llm=False)
+
+    assert result["ia_origem"] == "fallback"
+    assert result["severidade"] == "HIGH"

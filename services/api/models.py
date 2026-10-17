@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from uuid import uuid4
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
@@ -19,7 +19,12 @@ class Scan(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
     nome: Mapped[str] = mapped_column(String(255))
     status: Mapped[str] = mapped_column(String(20), default="PENDING")
-    criado_em: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    celery_task_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    ia_pendente: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    criado_em: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+    )
     findings: Mapped[list["Finding"]] = relationship(
         back_populates="scan",
         cascade="all, delete-orphan",

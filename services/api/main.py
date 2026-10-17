@@ -5,11 +5,14 @@ from __future__ import annotations
 import os
 import io
 import zipfile
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated
+from zoneinfo import ZoneInfo
 
 from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile, status
-from sqlalchemy import select
+from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from services.worker import tasks
@@ -19,6 +22,13 @@ from .models import Finding, Scan
 from .schemas import FindingResponse, ScanResponse
 
 app = FastAPI(title="SAST Platform", version="0.1.0")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:8080"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 MAX_UPLOAD_BYTES = int(os.getenv("SAST_MAX_UPLOAD_BYTES", str(50 * 1024 * 1024)))
 
@@ -63,12 +73,46 @@ async def create_scan(
     tasks.UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     (tasks.UPLOAD_DIR / f"{scan.id}.zip").write_bytes(content)
     try:
-        tasks.run_scan.delay(scan.id)
+        result = tasks.run_scan.delay(scan.id)
+        scan.celery_task_id = result.id
+        db.commit()
+        if _cancel_previous_enabled():
+            _cancel_previous_scans(db, scan.id)
     except Exception as exc:
         scan.status = "FAILED"
         db.commit()
         raise HTTPException(status_code=503, detail="Não foi possível enfileirar a análise") from exc
     return scan
+
+
+def _cancel_previous_scans(db: Session, current_scan_id: str) -> None:
+    """Cancela scans anteriores ainda pendentes ou em execução."""
+    previous = list(
+        db.scalars(
+            select(Scan).where(
+                Scan.id != current_scan_id,
+                or_(
+                    Scan.status.in_(("PENDING", "RUNNING")),
+                    (Scan.status == "DONE") & Scan.ia_pendente.is_(True),
+                ),
+            )
+        )
+    )
+    for scan in previous:
+        scan.status = "CANCELLED"
+        if scan.celery_task_id:
+            tasks.celery_app.control.revoke(
+                scan.celery_task_id,
+                terminate=True,
+                signal="SIGTERM",
+            )
+    if previous:
+        db.commit()
+
+
+def _cancel_previous_enabled() -> bool:
+    """Lê a flag de cancelamento com padrão habilitado."""
+    return os.getenv("SAST_CANCEL_PREVIOUS", "true").lower() in {"1", "true", "yes", "on"}
 
 
 @app.get("/scans/{scan_id}", response_model=ScanResponse)
@@ -102,6 +146,95 @@ def list_findings(
     if scan_id:
         query = query.where(Finding.scan_id == scan_id)
     return list(db.scalars(query.order_by(Finding.id)))
+
+
+@app.get("/metrics/severity", tags=["metrics"])
+def severity_metrics(
+    db: Annotated[Session, Depends(get_db)],
+    scan_id: str | None = Query(default=None),
+) -> dict[str, int]:
+    """Retorna a distribuição de findings por severidade."""
+    query = select(Finding.severidade, func.count(Finding.id))
+    query = _filter_findings(query, scan_id).group_by(Finding.severidade)
+    rows = db.execute(query)
+    values = {severity: 0 for severity in ("CRITICAL", "HIGH", "MEDIUM", "LOW")}
+    values.update({str(severity): int(total) for severity, total in rows})
+    return values
+
+
+@app.get("/metrics/trend", tags=["metrics"])
+def trend_metrics(
+    db: Annotated[Session, Depends(get_db)],
+    scan_id: str | None = Query(default=None),
+) -> list[dict[str, int | str]]:
+    """Retorna findings agrupados pela semana de criação do scan."""
+    query = select(Scan.criado_em).join(Finding, Finding.scan_id == Scan.id)
+    rows = db.execute(_filter_findings(query, scan_id))
+    totals: dict[str, int] = {}
+    for created_at, in rows:
+        created_at = _as_utc(created_at).astimezone(ZoneInfo("America/Sao_Paulo"))
+        iso = created_at.isocalendar()
+        week = f"{iso.year:04d}-W{iso.week:02d}"
+        totals[week] = totals.get(week, 0) + 1
+    return [{"semana": week, "total": totals[week]} for week in sorted(totals)]
+
+
+@app.get("/metrics/top-files", tags=["metrics"])
+def top_files_metrics(
+    db: Annotated[Session, Depends(get_db)],
+    scan_id: str | None = Query(default=None),
+) -> list[dict[str, int | str]]:
+    """Retorna os cinco arquivos com mais findings críticos."""
+    query = select(Finding.arquivo, func.count(Finding.id).label("total"))
+    query = (
+        _filter_findings(query, scan_id)
+        .where(Finding.severidade == "CRITICAL")
+        .group_by(Finding.arquivo)
+        .order_by(func.count(Finding.id).desc(), Finding.arquivo)
+        .limit(5)
+    )
+    rows = db.execute(query)
+    return [{"arquivo": str(filename), "total": int(total)} for filename, total in rows]
+
+
+@app.get("/metrics/summary", tags=["metrics"])
+def summary_metrics(
+    db: Annotated[Session, Depends(get_db)],
+    scan_id: str | None = Query(default=None),
+) -> dict[str, int]:
+    """Retorna totais gerais do dashboard."""
+    total = db.scalar(_filter_findings(select(func.count(Finding.id)), scan_id)) or 0
+    critical = db.scalar(
+        _filter_findings(
+            select(func.count(Finding.id)).where(Finding.severidade == "CRITICAL"),
+            scan_id,
+        )
+    ) or 0
+    dismissed = db.scalar(
+        _filter_findings(
+            select(func.count(Finding.id)).where(Finding.falso_positivo.is_(True)),
+            scan_id,
+        )
+    ) or 0
+    return {
+        "total": int(total),
+        "criticos": int(critical),
+        "falsos_positivos_descartados_ia": int(dismissed),
+    }
+
+
+def _filter_findings(query, scan_id: str | None):
+    """Aplica o escopo opcional de um scan à consulta de findings."""
+    if scan_id:
+        query = query.where(Finding.scan_id == scan_id)
+    return query
+
+
+def _as_utc(value: datetime) -> datetime:
+    """Interpreta datas sem fuso como UTC e normaliza datas para UTC."""
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 
 def _valid_zip(content: bytes) -> bool:

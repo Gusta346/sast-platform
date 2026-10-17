@@ -15,6 +15,8 @@ services:
       CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/1}
       DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-sast_user}:${POSTGRES_PASSWORD:-change-me-local-only}@postgres:5432/${POSTGRES_DB:-sast}
       OLLAMA_URL: ${OLLAMA_URL:-http://ollama:11434}
+      SAST_AI_MAX_FINDINGS: ${SAST_AI_MAX_FINDINGS:-5}
+      SAST_CANCEL_PREVIOUS: ${SAST_CANCEL_PREVIOUS:-true}
     ports:
       - "${API_PORT:-8000}:8000"
     depends_on:
@@ -35,7 +37,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    command: celery -A services.worker.celery_app.celery_app worker --loglevel=info
+    command: celery -A services.worker.celery_app.celery_app worker --loglevel=info --concurrency=2
     volumes:
       - ./services:/app/services
       - ./samples:/app/samples
@@ -47,6 +49,8 @@ services:
       CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/1}
       DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-sast_user}:${POSTGRES_PASSWORD:-change-me-local-only}@postgres:5432/${POSTGRES_DB:-sast}
       OLLAMA_URL: ${OLLAMA_URL:-http://ollama:11434}
+      SAST_AI_MAX_FINDINGS: ${SAST_AI_MAX_FINDINGS:-5}
+      SAST_CANCEL_PREVIOUS: ${SAST_CANCEL_PREVIOUS:-true}
     depends_on:
       redis:
         condition: service_healthy

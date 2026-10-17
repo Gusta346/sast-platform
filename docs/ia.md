@@ -11,7 +11,15 @@ determinístico da regra é preservado.
 OLLAMA_URL=http://ollama:11434
 OLLAMA_MODEL=llama3
 OLLAMA_TIMEOUT=30
+SAST_AI_BUDGET=90
+SAST_AI_MAX_FINDINGS=5
 ```
+
+O worker envia ao Ollama apenas findings `HIGH` e `CRITICAL`, no máximo dez por
+scan. O orçamento total de enriquecimento é controlado por `SAST_AI_BUDGET`;
+quando ele se esgota, os findings restantes usam o fallback determinístico.
+`SAST_AI_MAX_FINDINGS` limita quantos achados críticos são enviados ao LLM por
+scan; os demais permanecem com `ia_origem="fallback"`.
 
 O modelo pode ser carregado no container com:
 

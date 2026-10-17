@@ -4,11 +4,122 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>SAST Platform</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+    <style>
+      :root { color-scheme: dark; --bg: #0d1117; --panel: #161b22; --border: #30363d; --text: #e6edf3; --muted: #8b949e; --accent: #58a6ff; }
+      * { box-sizing: border-box; }
+      body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 system-ui, sans-serif; }
+      header { border-bottom: 1px solid var(--border); padding: 20px 4vw; display: flex; justify-content: space-between; align-items: center; }
+      h1, h2 { margin: 0; } h1 { font-size: 22px; } h2 { font-size: 16px; margin-bottom: 16px; }
+      main { max-width: 1440px; margin: 0 auto; padding: 24px 4vw 48px; }
+      .muted { color: var(--muted); } .grid { display: grid; gap: 16px; }
+      .summary { grid-template-columns: repeat(3, 1fr); margin-bottom: 20px; }
+      .charts { grid-template-columns: 1fr 2fr; } .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 18px; }
+      .metric { font-size: 30px; font-weight: 700; margin-top: 5px; } .metric.critical { color: #ff6b6b; }
+      .chart-wrap { height: 280px; position: relative; } .upload { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+      input, select, button { background: #21262d; border: 1px solid var(--border); border-radius: 6px; color: var(--text); padding: 9px 11px; }
+      button { cursor: pointer; background: #238636; border-color: #2ea043; } button.secondary { background: #21262d; }
+      table { width: 100%; border-collapse: collapse; } th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+      th { color: var(--muted); font-weight: 600; } .badge { border-radius: 99px; padding: 3px 8px; font-size: 11px; font-weight: 700; }
+      .CRITICAL { background: #7f1d1d; color: #fecaca; } .HIGH { background: #7c2d12; color: #fed7aa; }
+      .MEDIUM { background: #713f12; color: #fef08a; } .LOW { background: #1e3a8a; color: #bfdbfe; }
+      .suggestion { color: var(--muted); max-width: 360px; } .status { min-height: 24px; color: var(--accent); }
+      @media (max-width: 850px) { .summary, .charts { grid-template-columns: 1fr; } header { display: block; } }
+    </style>
   </head>
   <body>
+    <header><h1>SAST Platform</h1><span class="muted">Security observability</span></header>
     <main>
-      <h1>SAST Platform</h1>
-      <p>Dashboard inicial da plataforma de análise de segurança.</p>
+      <section class="grid summary">
+        <article class="panel"><span class="muted">Falhas detectadas</span><div id="total" class="metric">-</div></article>
+        <article class="panel"><span class="muted">Críticos</span><div id="critical" class="metric critical">-</div></article>
+        <article class="panel"><span class="muted">Descartados pela IA</span><div id="dismissed" class="metric">-</div></article>
+      </section>
+      <section class="panel" style="margin-bottom:16px">
+        <h2>Enviar código para análise</h2>
+        <form id="scan-form" class="upload">
+          <input id="zip-file" type="file" accept=".zip" required>
+          <button type="submit">Iniciar scan</button>
+          <span id="upload-status" class="status"></span>
+        </form>
+      </section>
+      <section class="panel" style="margin-bottom:16px">
+        <label for="scan-scope"><strong>Escopo</strong></label>
+        <select id="scan-scope" aria-label="Escopo da análise">
+          <option value="">Todos os scans</option>
+        </select>
+        <div id="ai-status" class="status" aria-live="polite"></div>
+      </section>
+      <section class="grid charts">
+        <article class="panel"><h2>Severidade</h2><div class="chart-wrap"><canvas id="severity-chart"></canvas></div></article>
+        <article class="panel"><h2>Tendência semanal</h2><div class="chart-wrap"><canvas id="trend-chart"></canvas></div></article>
+      </section>
+      <section class="grid" style="grid-template-columns: 1fr 2fr; margin-top:16px">
+        <article class="panel"><h2>Top 5 arquivos críticos</h2><ol id="top-files" class="muted"></ol></article>
+        <article class="panel">
+          <div style="display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap">
+            <h2>Falhas detectadas</h2>
+            <div><select id="severity-filter"><option value="">Todas as severidades</option><option>CRITICAL</option><option>HIGH</option><option>MEDIUM</option><option>LOW</option></select> <button id="export-csv" class="secondary">Exportar CSV</button></div>
+          </div>
+          <div style="overflow:auto"><table><thead><tr><th>Arquivo</th><th>Linha</th><th>Severidade</th><th>CWE</th><th>OWASP</th><th>Sugestão da IA</th></tr></thead><tbody id="findings-body"></tbody></table></div>
+        </article>
+      </section>
     </main>
+    <script>
+      const API = `${window.location.protocol}//${window.location.hostname}:8000`;
+      let findings = [], scans = [], selectedScanId = '', severityChart, trendChart;
+      const colors = { CRITICAL: '#ef4444', HIGH: '#f97316', MEDIUM: '#eab308', LOW: '#3b82f6' };
+      async function get(path) { const response = await fetch(`${API}${path}`); if (!response.ok) throw new Error(`HTTP ${response.status}`); return response.json(); }
+      function scopedPath(path) { return selectedScanId ? `${path}${path.includes('?') ? '&' : '?'}scan_id=${encodeURIComponent(selectedScanId)}` : path; }
+      function formatDate(value) {
+        const normalized = typeof value === 'string' && !(/[zZ]|[+-]\d{2}:\d{2}$/.test(value)) ? `${value}Z` : value;
+        return new Date(normalized).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" });
+      }
+      function renderScanOptions() {
+        const select = document.getElementById('scan-scope');
+        select.innerHTML = '<option value="">Todos os scans</option>' + scans.map(scan => `<option value="${escapeHtml(scan.id)}">${escapeHtml(scan.nome)} · ${formatDate(scan.criado_em)}${scan.status === 'CANCELLED' ? ' (cancelado)' : ''}</option>`).join('');
+        select.value = selectedScanId;
+      }
+      async function loadScans(selectLatest = false) {
+        scans = await get('/scans');
+        if (selectLatest || (selectedScanId && !scans.some(scan => scan.id === selectedScanId))) selectedScanId = scans[0]?.id || '';
+        renderScanOptions();
+      }
+      function drawCharts(severity, trend) {
+        const values = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'];
+        severityChart?.destroy(); trendChart?.destroy();
+        severityChart = new Chart(document.getElementById('severity-chart'), { type:'doughnut', data:{ labels:['Crítico','Alto','Médio','Baixo'], datasets:[{ data:values.map(v=>severity[v]||0), backgroundColor:values.map(v=>colors[v]) }] }, options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'bottom'}}}});
+        trendChart = new Chart(document.getElementById('trend-chart'), { type:'line', data:{ labels:trend.map(item=>item.semana), datasets:[{ label:'Falhas', data:trend.map(item=>item.total), borderColor:'#58a6ff', backgroundColor:'rgba(88,166,255,.18)', fill:true, tension:.3 }] }, options:{ responsive:true, maintainAspectRatio:false, scales:{y:{beginAtZero:true,ticks:{precision:0}}}, plugins:{legend:{display:false}}}});
+      }
+      function renderFindings() {
+        const filter = document.getElementById('severity-filter').value;
+        document.getElementById('findings-body').innerHTML = findings.filter(f=>!filter||f.severidade===filter).map(f=>`<tr><td>${escapeHtml(f.arquivo)}</td><td>${f.linha}</td><td><span class="badge ${f.severidade}">${f.severidade}</span></td><td>${escapeHtml(f.cwe||'-')}</td><td>${escapeHtml(f.owasp||'-')}</td><td class="suggestion"><details><summary>${escapeHtml(f.ia_origem||'fallback')} · ver sugestão</summary>${escapeHtml(f.remediacao_ia||f.remediacao||'-')}</details></td></tr>`).join('');
+      }
+      function escapeHtml(value) { return String(value).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c])); }
+      async function refresh() {
+        try {
+          await loadScans();
+          const [summary,severity,trend,top] = await Promise.all([get(scopedPath('/metrics/summary')),get(scopedPath('/metrics/severity')),get(scopedPath('/metrics/trend')),get(scopedPath('/metrics/top-files'))]);
+          findings = await get(scopedPath('/findings')); document.getElementById('total').textContent=summary.total; document.getElementById('critical').textContent=summary.criticos; document.getElementById('dismissed').textContent=summary.falsos_positivos_descartados_ia;
+          document.getElementById('top-files').innerHTML=top.map(item=>`<li>${escapeHtml(item.arquivo)} <strong>(${item.total})</strong></li>`).join('')||'<li>Nenhum finding crítico</li>'; drawCharts(severity,trend); renderFindings();
+          const pending = selectedScanId ? scans.some(scan => scan.id === selectedScanId && scan.ia_pendente) : scans.some(scan => scan.ia_pendente);
+          document.getElementById('ai-status').textContent = pending ? `IA analisando os ${escapeHtml('5')} achados mais críticos...` : '';
+        } catch (error) { document.getElementById('upload-status').textContent = `API indisponível: ${error.message}`; }
+      }
+      document.getElementById('scan-scope').addEventListener('change', event => { selectedScanId = event.target.value; refresh(); });
+      document.getElementById('severity-filter').addEventListener('change', renderFindings);
+      document.getElementById('export-csv').addEventListener('click', () => { const rows=[['arquivo','linha','severidade','cwe','owasp','sugestao_ia'],...findings.map(f=>[f.arquivo,f.linha,f.severidade,f.cwe,f.owasp,f.remediacao_ia||f.remediacao||''])]; const blob=new Blob([rows.map(r=>r.map(v=>`"${String(v).replaceAll('"','""')}"`).join(',')).join('\n')],{type:'text/csv'}); const link=document.createElement('a'); link.href=URL.createObjectURL(blob); link.download='sast-findings.csv'; link.click(); });
+      async function waitForScan(scanId) {
+        for (let attempt = 0; attempt < 120; attempt += 1) {
+          const scan = await get(`/scans/${encodeURIComponent(scanId)}`);
+          if (scan.status === 'DONE') return scan;
+          if (scan.status === 'FAILED') throw new Error('A análise falhou');
+          await new Promise(resolve => setTimeout(resolve, 2000));
+        }
+        throw new Error('Tempo limite aguardando a análise');
+      }
+      document.getElementById('scan-form').addEventListener('submit', async event => { event.preventDefault(); const status=document.getElementById('upload-status'); const file=document.getElementById('zip-file').files[0]; const body=new FormData(); body.append('file',file); status.textContent='Enviando...'; try { const response=await fetch(`${API}/scans`,{method:'POST',body}); if(!response.ok) throw new Error((await response.json()).detail||response.status); const scan=await response.json(); status.textContent='Scan enfileirado; aguardando conclusão...'; await waitForScan(scan.id); selectedScanId=scan.id; await loadScans(); await refresh(); status.textContent='Scan concluído e selecionado.'; } catch(error) { status.textContent=`Erro: ${error.message}`; }});
+      (async () => { await loadScans(true); await refresh(); })(); setInterval(refresh, 5000);
+    </script>
   </body>
 </html>

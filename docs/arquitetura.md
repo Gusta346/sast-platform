@@ -8,8 +8,8 @@ C4Context
     Person(developer, "Desenvolvedor", "Envia código e consulta resultados")
     System(sast, "Plataforma SAST", "Analisa código Python e aplica o Security Gate")
     System_Ext(ollama, "Ollama + Llama 3", "Classifica severidade e sugere remediações localmente")
-    Rel(developer, sast, "Envia código e consulta findings", "HTTPS")
-    Rel(sast, ollama, "Solicita classificação e remediação", "HTTP")
+    Rel(developer, sast, "Envia código e consulta findings", "HTTP")
+    Rel(sast, ollama, "Solicita enriquecimento quando elegível", "HTTP")
 ```
 
 ## Diagrama C4 — Contêiner
@@ -18,35 +18,60 @@ C4Context
 C4Container
     title Contêineres da plataforma SAST
     Person(developer, "Desenvolvedor", "Usuário da plataforma")
-    Container(api, "API", "FastAPI", "Recebe código, cria análises e expõe findings")
-    Container(worker, "Worker", "Celery + Python", "Executa análises de forma assíncrona")
-    Container(redis, "Fila", "Redis", "Broker e backend de resultados do Celery")
-    ContainerDb(postgres, "Banco", "PostgreSQL", "Armazena análises e findings")
-    Container(ollama, "IA local", "Ollama + Llama 3", "Apoia severidade e remediação")
-    Container(dashboard, "Dashboard", "Nginx", "Entrega a interface web estática")
+    Container(api, "API", "FastAPI", "Recebe ZIP, cria scans, métricas e findings")
+    Container(worker, "Worker", "Celery + Python", "Analisa código e enriquece findings")
+    Container(redis, "Fila", "Redis", "Broker e backend do Celery")
+    ContainerDb(postgres, "Banco", "PostgreSQL", "Scans e findings")
+    Container(ollama, "IA local", "Ollama + Llama 3", "Classificação e remediação opcional")
+    Container(dashboard, "Dashboard", "Nginx + JavaScript", "Interface estática")
     Rel(developer, dashboard, "Acessa", "HTTP")
-    Rel(developer, api, "Envia código e consulta", "HTTP/JSON")
-    Rel(api, redis, "Enfileira tarefas", "Redis protocol")
-    Rel(worker, redis, "Consome tarefas", "Redis protocol")
-    Rel(worker, postgres, "Salva análises e findings", "SQL")
-    Rel(api, postgres, "Consulta estado e findings", "SQL")
-    Rel(worker, ollama, "Solicita inferências locais", "HTTP")
-    Rel(dashboard, api, "Consulta dados", "HTTP/JSON")
+    Rel(developer, api, "Envia e consulta", "HTTP/JSON")
+    Rel(api, redis, "Publica tarefas", "Redis")
+    Rel(worker, redis, "Consome tarefas", "Redis")
+    Rel(api, postgres, "Lê e grava estado", "SQL")
+    Rel(worker, postgres, "Grava resultados", "SQL")
+    Rel(worker, ollama, "Envia contexto elegível", "HTTP")
+    Rel(dashboard, api, "Consulta API", "HTTP/JSON")
 ```
 
-## Serviços e fluxo
+## Serviços
 
-- **API**: recebe o código-fonte, valida a requisição, enfileira a análise e
-  disponibiliza o estado e os findings.
-- **Worker**: consome tarefas do Celery, executa o engine com `ast`, Tree-sitter,
-  Bandit e Semgrep, e coordena a classificação opcional pela IA local.
-- **Redis**: funciona como broker das tarefas e backend de resultados do Celery.
-- **PostgreSQL**: persiste análises, findings e seus metadados.
-- **Ollama**: executa o Llama 3 localmente para apoiar severidade e remediação,
-  sem enviar código para um serviço externo.
-- **Dashboard**: entrega o front-end estático via Nginx e consulta a API.
+- **API:** FastAPI com upload ZIP, validação de tamanho/extensão, proteção
+  contra zip-slip, endpoints de scans, findings e métricas.
+- **Worker:** Celery com concorrência 2. Extrai o arquivo sem executar o código,
+  chama o scanner e persiste resultados.
+- **Engine:** parser `ast` e Tree-sitter, regras próprias, taint
+  intraprocedural, Bandit e Semgrep.
+- **Redis:** broker e backend configurados para Celery.
+- **PostgreSQL:** banco principal de produção.
+- **Ollama:** serviço local opcional para enriquecimento dos findings mais
+  críticos.
+- **Dashboard:** HTML/JavaScript puro, Chart.js via CDN e Nginx na porta 8080.
 
-O fluxo assíncrono começa quando a API recebe o código e publica uma tarefa no
-Redis. O worker consome essa tarefa, analisa o código, consulta o Ollama quando
-necessário e salva os resultados no PostgreSQL. O dashboard consulta a API para
-exibir o estado da análise e os findings.
+## Fluxo assíncrono
+
+1. `POST /scans` recebe o ZIP e cria o registro `PENDING`.
+2. O arquivo é salvo no volume compartilhado e a API publica `run_scan` no
+   Redis.
+3. A API armazena `celery_task_id`; com `SAST_CANCEL_PREVIOUS=true`, scans
+   anteriores ainda ativos ou com IA pendente são cancelados.
+4. O worker extrai o ZIP de forma segura e executa a análise.
+5. Todos os findings são persistidos com fallback determinístico.
+6. O scan passa a `DONE`, permitindo que o dashboard mostre resultados
+   imediatamente.
+7. Em uma segunda fase, no máximo `SAST_AI_MAX_FINDINGS` achados `CRITICAL` ou
+   `HIGH` são enviados ao Ollama, respeitando `SAST_AI_BUDGET`.
+8. Cada resposta válida atualiza a linha do finding; falhas mantêm o fallback.
+9. O dashboard consulta `/scans`, `/findings` e `/metrics/*` a cada cinco
+   segundos enquanto `ia_pendente` estiver ativo.
+
+## Cancelamento e migração
+
+O scan mais recente vence. A API marca scans anteriores como `CANCELLED` e
+revoga suas tarefas Celery. O worker relê o status antes de iniciar, antes e
+depois de cada chamada de IA e antes de concluir.
+
+Não há Alembic nem histórico de migrações versionadas. Na inicialização, API e
+worker executam uma migração leve e idempotente para colunas novas, como
+`celery_task_id`, `ia_pendente` e `ia_origem`. Para evolução de schema em
+produção, recomenda-se adotar Alembic.

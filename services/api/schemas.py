@@ -48,6 +48,7 @@ class FindingResponse(BaseModel):
     remediacao: str
     ferramentas: str
     falso_positivo: bool
+    explicacao_ia: str | None
     remediacao_ia: str | None
     severidade_ia: str | None
     ia_origem: str

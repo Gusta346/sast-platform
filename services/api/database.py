@@ -20,6 +20,7 @@ MIGRATIONS = [
     ("scans", "celery_task_id", "VARCHAR(255)"),
     ("scans", "ia_pendente", "BOOLEAN DEFAULT FALSE"),
     ("findings", "ia_origem", "VARCHAR(20) DEFAULT 'fallback'"),
+    ("findings", "explicacao_ia", "TEXT"),
 ]
 _IDENTIFIER_PATTERN = re.compile(r"^[a-z_][a-z0-9_]*$")
 _ALLOWED_COLUMN_TYPES = frozenset(
@@ -27,6 +28,7 @@ _ALLOWED_COLUMN_TYPES = frozenset(
         "VARCHAR(20) DEFAULT 'fallback'",
         "VARCHAR(255)",
         "BOOLEAN DEFAULT FALSE",
+        "TEXT",
     }
 )
 

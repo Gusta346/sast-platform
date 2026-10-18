@@ -50,6 +50,7 @@ class Finding(Base):
     remediacao: Mapped[str] = mapped_column(Text)
     ferramentas: Mapped[str] = mapped_column(String(255), default="")
     falso_positivo: Mapped[bool] = mapped_column(default=False)
+    explicacao_ia: Mapped[str | None] = mapped_column(Text, nullable=True)
     remediacao_ia: Mapped[str | None] = mapped_column(Text, nullable=True)
     severidade_ia: Mapped[str | None] = mapped_column(String(20), nullable=True)
     ia_origem: Mapped[str] = mapped_column(String(20), default="fallback")

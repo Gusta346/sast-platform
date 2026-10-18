@@ -83,7 +83,10 @@ def run_scan(scan_id: str) -> str:
                 elapsed_ms,
             )
             if ai_result["ia_origem"] == "llm":
-                model_finding.falso_positivo = bool(ai_result["falso_positivo"])
+                model_finding.falso_positivo = bool(ai_result.get("falso_positivo", False))
+                model_finding.explicacao_ia = str(
+                    ai_result.get("explicacao", ai_result.get("justificativa", ""))
+                )
                 model_finding.remediacao_ia = str(ai_result["codigo_corrigido"])
                 model_finding.severidade_ia = str(ai_result["severidade"])
                 model_finding.ia_origem = "llm"
@@ -165,6 +168,7 @@ def _persist_fallback_findings(
             remediacao=finding.remediacao,
             ferramentas=",".join(finding.ferramentas),
             falso_positivo=False,
+            explicacao_ia=str(fallback["explicacao"]),
             remediacao_ia=str(fallback["codigo_corrigido"]),
             severidade_ia=str(fallback["severidade"]),
             ia_origem="fallback",

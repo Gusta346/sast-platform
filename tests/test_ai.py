@@ -52,6 +52,13 @@ def test_ollama_success(monkeypatch) -> None:
     assert result == expected
     assert len(calls) == 1
     assert calls[0][1]["timeout"] == 30.0
+    assert calls[0][1]["json"]["options"] == {"temperature": 0.1}
+    assert calls[0][1]["json"]["format"]["properties"]["severidade"]["enum"] == [
+        "CRITICAL",
+        "HIGH",
+        "MEDIUM",
+        "LOW",
+    ]
     assert "a = 1" in calls[0][1]["json"]["prompt"]
     assert "1: a = 1" not in calls[0][1]["json"]["prompt"]
 
@@ -190,11 +197,6 @@ def test_fallback_can_be_forced_without_calling_ollama(monkeypatch) -> None:
     "response_payload",
     [
         {"severidade": "HIGH", "explicacao": "", "codigo_corrigido": "fix"},
-        {
-            "severidade": "HIGH",
-            "explicacao": "connection.execute(query)",
-            "codigo_corrigido": "fix",
-        },
     ],
 )
 def test_invalid_explanation_uses_fallback(monkeypatch, response_payload) -> None:
@@ -212,3 +214,85 @@ def test_invalid_explanation_uses_fallback(monkeypatch, response_payload) -> Non
 
     assert result["ia_origem"] == "fallback"
     assert result["explicacao"]
+
+
+@pytest.mark.parametrize(
+    ("severity", "expected"),
+    [("ERRO", "CRITICAL"), ("desconhecida", "HIGH")],
+)
+def test_severity_is_normalized_without_rejecting_response(
+    monkeypatch, severity, expected
+) -> None:
+    """Severidade desconhecida não deve descartar uma explicação válida."""
+    class Response:
+        def raise_for_status(self) -> None:
+            pass
+
+        def json(self) -> dict[str, str]:
+            return {
+                "response": json.dumps(
+                    {
+                        "severidade": severity,
+                        "explicacao": "A entrada chega à consulta.",
+                        "codigo_corrigido": "connection.execute(query, params)",
+                    }
+                )
+            }
+
+    monkeypatch.setattr(requests, "post", lambda *args, **kwargs: Response())
+
+    result = classify_and_remediate(_finding(), "connection.execute(query)")
+
+    assert result["ia_origem"] == "llm"
+    assert result["severidade"] == expected
+
+
+def test_distant_severity_keeps_rule_severity(monkeypatch) -> None:
+    """Uma alteração de mais de um nível deve ser ignorada."""
+    class Response:
+        def raise_for_status(self) -> None:
+            pass
+
+        def json(self) -> dict[str, str]:
+            return {
+                "response": json.dumps(
+                    {
+                        "severidade": "LOW",
+                        "explicacao": "A entrada chega à consulta.",
+                        "codigo_corrigido": "connection.execute(query, params)",
+                    }
+                )
+            }
+
+    monkeypatch.setattr(requests, "post", lambda *args, **kwargs: Response())
+
+    result = classify_and_remediate(_finding(), "connection.execute(query)")
+
+    assert result["ia_origem"] == "llm"
+    assert result["severidade"] == "HIGH"
+
+
+def test_invalid_code_is_discarded_without_fallback(monkeypatch) -> None:
+    """Código inválido deve ser descartado sem perder a explicação."""
+    class Response:
+        def raise_for_status(self) -> None:
+            pass
+
+        def json(self) -> dict[str, str]:
+            return {
+                "response": json.dumps(
+                    {
+                        "severidade": "HIGH",
+                        "explicacao": "A entrada chega à consulta.",
+                        "codigo_corrigido": "def quebrado(:",
+                    }
+                )
+            }
+
+    monkeypatch.setattr(requests, "post", lambda *args, **kwargs: Response())
+
+    result = classify_and_remediate(_finding(), "connection.execute(query)")
+
+    assert result["ia_origem"] == "llm"
+    assert result["explicacao"] == "A entrada chega à consulta."
+    assert result["codigo_corrigido"] == ""

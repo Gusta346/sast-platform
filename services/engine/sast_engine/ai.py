@@ -58,7 +58,7 @@ def classify_and_remediate(
                 timeout=timeout,
             )
             response.raise_for_status()
-            result = _validate_result(_response_text(response))
+            result = _validate_result(_response_text(response), _context_window(code_context, finding.linha))
             if result is not None:
                 return result
         except (requests.RequestException, ValueError, TypeError, json.JSONDecodeError):
@@ -72,8 +72,10 @@ def _system_prompt() -> str:
     return (
         "Você é um analista de segurança de aplicações. "
         "Responda exclusivamente com um objeto JSON válido, sem markdown, "
-        "contendo exatamente: severidade, falso_positivo, justificativa e codigo_corrigido. "
-        "A severidade deve ser CRITICAL, HIGH, MEDIUM ou LOW; falso_positivo deve ser booleano."
+        "contendo exatamente: severidade, explicacao e codigo_corrigido. "
+        "A severidade deve ser CRITICAL, HIGH, MEDIUM ou LOW; "
+        "explicacao deve ter até 3 frases, em português, e codigo_corrigido "
+        "deve conter apenas o código, sem números de linha."
     )
 
 
@@ -100,7 +102,7 @@ def _context_window(source: str, line: int) -> str:
     start = max(0, line - 6)
     end = min(len(lines), line + 5)
     return "\n".join(
-        f"{index + 1}: {lines[index]}"
+        lines[index]
         for index in range(start, end)
     )
 
@@ -112,35 +114,39 @@ def _response_text(response: requests.Response) -> str:
     return payload["response"]
 
 
-def _validate_result(raw: str) -> dict[str, Any] | None:
+def _validate_result(raw: str, code_context: str = "") -> dict[str, Any] | None:
     payload = json.loads(raw)
     if not isinstance(payload, dict):
         return None
     severity = payload.get("severidade")
-    false_positive = payload.get("falso_positivo")
-    justification = payload.get("justificativa")
+    explanation = payload.get("explicacao")
     fixed_code = payload.get("codigo_corrigido")
     if (
         severity not in {severity.value for severity in Severity}
-        or not isinstance(false_positive, bool)
-        or not isinstance(justification, str)
+        or not isinstance(explanation, str)
+        or not explanation.strip()
         or not isinstance(fixed_code, str)
+        or _is_code_copy(explanation, code_context)
     ):
         return None
     return {
         "severidade": severity,
-        "falso_positivo": false_positive,
-        "justificativa": justification,
+        "explicacao": explanation.strip(),
         "codigo_corrigido": fixed_code,
         "ia_origem": "llm",
     }
 
 
+def _is_code_copy(explanation: str, code: str) -> bool:
+    """Rejeita explicações que sejam apenas uma cópia do código recebido."""
+    normalize = lambda value: " ".join(value.split())
+    return bool(code.strip()) and normalize(explanation) == normalize(code)
+
+
 def _fallback(finding: Finding) -> dict[str, Any]:
     return {
         "severidade": finding.severidade.value,
-        "falso_positivo": False,
-        "justificativa": "Ollama indisponível ou respondeu em formato inválido; foi usada a classificação padrão da regra.",
+        "explicacao": "Ollama indisponível ou respondeu em formato inválido; foi usada a orientação determinística da regra.",
         "codigo_corrigido": _REMEDIATIONS.get(
             finding.rule_id,
             finding.remediacao or "Revise a entrada e aplique validação e sanitização adequadas.",

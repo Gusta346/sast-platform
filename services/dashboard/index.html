@@ -23,7 +23,7 @@
       th { color: var(--muted); font-weight: 600; } .badge { border-radius: 99px; padding: 3px 8px; font-size: 11px; font-weight: 700; }
       .CRITICAL { background: #7f1d1d; color: #fecaca; } .HIGH { background: #7c2d12; color: #fed7aa; }
       .MEDIUM { background: #713f12; color: #fef08a; } .LOW { background: #1e3a8a; color: #bfdbfe; }
-      .suggestion { color: var(--muted); max-width: 360px; } .status { min-height: 24px; color: var(--accent); }
+      .suggestion { color: var(--muted); max-width: 360px; } .suggestion p { margin: 8px 0; color: var(--text); } .suggestion pre { margin: 8px 0 0; white-space: pre-wrap; overflow-x: auto; } .status { min-height: 24px; color: var(--accent); }
       @media (max-width: 850px) { .summary, .charts { grid-template-columns: 1fr; } header { display: block; } }
     </style>
   </head>
@@ -77,7 +77,17 @@
       }
       function renderScanOptions() {
         const select = document.getElementById('scan-scope');
-        select.innerHTML = '<option value="">Todos os scans</option>' + scans.map(scan => `<option value="${escapeHtml(scan.id)}">${escapeHtml(scan.nome)} · ${formatDate(scan.criado_em)}${scan.status === 'CANCELLED' ? ' (cancelado)' : ''}</option>`).join('');
+        select.replaceChildren();
+        const allOption = document.createElement('option');
+        allOption.value = '';
+        allOption.textContent = 'Todos os scans';
+        select.appendChild(allOption);
+        scans.forEach(scan => {
+          const option = document.createElement('option');
+          option.value = scan.id;
+          option.textContent = `${scan.nome} · ${formatDate(scan.criado_em)}${scan.status === 'CANCELLED' ? ' (cancelado)' : ''}`;
+          select.appendChild(option);
+        });
         select.value = selectedScanId;
       }
       async function loadScans(selectLatest = false) {
@@ -93,17 +103,62 @@
       }
       function renderFindings() {
         const filter = document.getElementById('severity-filter').value;
-        document.getElementById('findings-body').innerHTML = findings.filter(f=>!filter||f.severidade===filter).map(f=>`<tr><td>${escapeHtml(f.arquivo)}</td><td>${f.linha}</td><td><span class="badge ${f.severidade}">${f.severidade}</span></td><td>${escapeHtml(f.cwe||'-')}</td><td>${escapeHtml(f.owasp||'-')}</td><td class="suggestion"><details><summary>${escapeHtml(f.ia_origem||'fallback')} · ver sugestão</summary>${escapeHtml(f.remediacao_ia||f.remediacao||'-')}</details></td></tr>`).join('');
+        const body = document.getElementById('findings-body');
+        body.replaceChildren();
+        findings.filter(f=>!filter||f.severidade===filter).forEach(f => {
+          const row = document.createElement('tr');
+          [f.arquivo, f.linha, f.cwe || '-', f.owasp || '-'].forEach(value => {
+            const cell = document.createElement('td');
+            cell.textContent = value;
+            row.appendChild(cell);
+          });
+          const severityCell = document.createElement('td');
+          const badge = document.createElement('span');
+          badge.className = `badge ${f.severidade}`;
+          badge.textContent = f.severidade;
+          severityCell.appendChild(badge);
+          row.insertBefore(severityCell, row.children[2]);
+
+          const suggestionCell = document.createElement('td');
+          suggestionCell.className = 'suggestion';
+          const details = document.createElement('details');
+          const summary = document.createElement('summary');
+          summary.textContent = `${f.ia_origem || 'fallback'} · ver sugestão`;
+          details.appendChild(summary);
+          const explanation = document.createElement('p');
+          explanation.textContent = f.explicacao_ia || 'sem sugestão';
+          details.appendChild(explanation);
+          const code = document.createElement('pre');
+          const codeElement = document.createElement('code');
+          codeElement.textContent = f.remediacao_ia || 'sem sugestão';
+          code.appendChild(codeElement);
+          details.appendChild(code);
+          suggestionCell.appendChild(details);
+          row.appendChild(suggestionCell);
+          body.appendChild(row);
+        });
       }
-      function escapeHtml(value) { return String(value).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c])); }
       async function refresh() {
         try {
           await loadScans();
           const [summary,severity,trend,top] = await Promise.all([get(scopedPath('/metrics/summary')),get(scopedPath('/metrics/severity')),get(scopedPath('/metrics/trend')),get(scopedPath('/metrics/top-files'))]);
           findings = await get(scopedPath('/findings')); document.getElementById('total').textContent=summary.total; document.getElementById('critical').textContent=summary.criticos; document.getElementById('dismissed').textContent=summary.falsos_positivos_descartados_ia;
-          document.getElementById('top-files').innerHTML=top.map(item=>`<li>${escapeHtml(item.arquivo)} <strong>(${item.total})</strong></li>`).join('')||'<li>Nenhum finding crítico</li>'; drawCharts(severity,trend); renderFindings();
+          const topFiles = document.getElementById('top-files');
+          topFiles.replaceChildren();
+          if (top.length) {
+            top.forEach(item => {
+              const entry = document.createElement('li');
+              entry.textContent = `${item.arquivo} (${item.total})`;
+              topFiles.appendChild(entry);
+            });
+          } else {
+            const entry = document.createElement('li');
+            entry.textContent = 'Nenhum finding crítico';
+            topFiles.appendChild(entry);
+          }
+          drawCharts(severity,trend); renderFindings();
           const pending = selectedScanId ? scans.some(scan => scan.id === selectedScanId && scan.ia_pendente) : scans.some(scan => scan.ia_pendente);
-          document.getElementById('ai-status').textContent = pending ? `IA analisando os ${escapeHtml('5')} achados mais críticos...` : '';
+          document.getElementById('ai-status').textContent = pending ? 'IA analisando os 5 achados mais críticos...' : '';
         } catch (error) { document.getElementById('upload-status').textContent = `API indisponível: ${error.message}`; }
       }
       document.getElementById('scan-scope').addEventListener('change', event => { selectedScanId = event.target.value; refresh(); });

@@ -7,7 +7,7 @@ def test_migration_rejects_invalid_values(monkeypatch):
     invalid_migrations = [
         ("scans; DROP TABLE findings", "coluna", "VARCHAR(255)"),
         ("scans", "coluna-invalida", "VARCHAR(255)"),
-        ("scans", "coluna", "TEXT"),
+        ("scans", "coluna", "INTEGER"),
     ]
 
     for migration in invalid_migrations:

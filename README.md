@@ -8,6 +8,16 @@ O projeto é fictício e foi criado para demonstração acadêmica e de
 DevSecOps. A amostra em `samples/vulnerable_app` é código próprio,
 propositalmente vulnerável e não deve ser exposta como aplicação real.
 
+## Integrantes
+
+| Nome | RM |
+| --- | --- |
+| Gustavo Oliveira Ribeiro | 559163 |
+| Augusto Mendonça | 558371 |
+| Gabriel Vasquez | 557056 |
+
+Projeto Integrador FIAP · Prof. Oerton Fernandes
+
 ## Visão geral
 
 1. O desenvolvedor envia um ZIP pela API ou pelo dashboard.
@@ -51,10 +61,13 @@ O diagrama C4 detalhado está em
 
 ## Como subir
 
-Pré-requisitos: Docker Desktop com Compose.
+Pré-requisitos: Git e Docker Desktop com Compose.
 
 ```bash
-docker compose up --build
+git clone https://github.com/Gusta346/sast-platform.git
+cd sast-platform
+copy .env.example .env
+docker compose up -d --build
 ```
 
 Serviços:
@@ -64,16 +77,20 @@ Serviços:
 - Dashboard: <http://localhost:8080>
 
 O arquivo `.env.example` contém as variáveis disponíveis. Copie-o para `.env`
-antes de alterar configurações locais:
-
-```bash
-copy .env.example .env
-```
+antes de alterar configurações locais (`cp` no Git Bash, Linux ou Mac).
 
 O modelo pode ser baixado no container Ollama com:
 
 ```bash
 docker compose exec ollama ollama pull llama3
+```
+
+Em computadores com pouca memória ou sem GPU, use o modelo menor
+`llama3.2` (defina `OLLAMA_MODEL=llama3.2` no `.env`):
+
+```bash
+docker compose exec ollama ollama pull llama3.2
+docker compose up -d --force-recreate worker
 ```
 
 Também existe o script [scripts/pull_model.sh](scripts/pull_model.sh), que
@@ -125,7 +142,9 @@ Saídas:
 - `relatorio.sarif`: formato para Code Scanning.
 - código `0`: nenhum finding no limiar;
 - código `1`: existe finding no limiar;
-- código `2`: caminho inválido, inexistente ou sem arquivos Python.
+- código `2`: caminho inválido, inexistente ou sem arquivos Python;
+- código `3`: falha em uma ferramenta externa (Bandit ou Semgrep), para que o
+  gate nunca passe em silêncio.
 
 O arquivo `.sast-ignore` é aplicado às regras internas, Bandit, Semgrep e à
 normalização final dos resultados.
@@ -161,17 +180,6 @@ Somente findings `CRITICAL` e `HIGH` são candidatos ao LLM. A seleção
 prioriza severidade e regras distintas e é limitada por
 `SAST_AI_MAX_FINDINGS`. O fallback mantém o CI funcional quando o Ollama não
 responde.
-
-## Capturas de tela
-
-As capturas não são versionadas no repositório. Inserir aqui, quando
-disponíveis:
-
-```text
-[PLACEHOLDER: dashboard com gráficos e tabela de findings]
-[PLACEHOLDER: upload e acompanhamento de um scan]
-[PLACEHOLDER: GitHub Actions com o Security Gate bloqueado]
-```
 
 ## Ética e uso autorizado
 
